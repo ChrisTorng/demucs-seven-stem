@@ -1,3 +1,3 @@
-"""Six Demucs stems plus a reconstruction residual track."""
+"""Six Demucs stems plus reconstruction and audio-combination utilities."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
