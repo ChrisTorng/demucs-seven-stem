@@ -7,6 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
+from .audio_ops import AudioOperationError, create_audio_output
 from .core import DemucsBackend, SeparationConfig, SeparationError, separate_track
 
 
@@ -21,17 +22,45 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="demucs-seven-stem",
         description=(
-            "Run Demucs htdemucs_6s, save its six stems, and create a seventh "
-            "residual track that reconstructs the pass input when summed."
+            "Run Demucs htdemucs_6s with a seventh residual track, or combine "
+            "sample-aligned audio files into a sum/difference WAV."
         ),
     )
-    parser.add_argument("inputs", nargs="+", type=Path, help="Input audio file(s).")
+    parser.add_argument(
+        "inputs",
+        nargs="+",
+        type=Path,
+        help=(
+            "Separation input file(s), or audio files/directories when "
+            "--audio-output is used."
+        ),
+    )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
         default=Path("separated-seven-stem"),
-        help="Output root directory (default: separated-seven-stem).",
+        help="Separation output root directory (default: separated-seven-stem).",
+    )
+    parser.add_argument(
+        "--audio-output",
+        type=Path,
+        metavar="OUTPUT.wav",
+        help=(
+            "Audio-operation mode: sum all supplied files/folders into this floating-point WAV. "
+            "With --reference, write reference minus the sum instead."
+        ),
+    )
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        metavar="REFERENCE",
+        help="Reference audio for difference mode: output = reference - sum(inputs).",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="In audio-operation mode, search supplied directories recursively.",
     )
     parser.add_argument("--model", default="htdemucs_6s", help="Demucs model name.")
     parser.add_argument(
@@ -84,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace an existing per-track output directory.",
+        help="Replace an existing separation directory or audio output file.",
     )
     parser.add_argument(
         "--no-progress",
@@ -107,19 +136,42 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s: %(message)s",
     )
 
-    config = SeparationConfig(
-        model=args.model,
-        device=args.device,
-        shifts=args.shifts,
-        split=not args.no_split,
-        overlap=args.overlap,
-        segment=args.segment,
-        residual_passes=args.residual_passes,
-        wav_subtype=args.wav_subtype,
-        progress=not args.no_progress,
-    )
-
     try:
+        if args.reference is not None and args.audio_output is None:
+            raise AudioOperationError("--reference requires --audio-output.")
+
+        if args.audio_output is not None:
+            result = create_audio_output(
+                args.inputs,
+                args.audio_output,
+                reference_path=args.reference,
+                recursive=args.recursive,
+                wav_subtype=args.wav_subtype,
+                overwrite=args.overwrite,
+            )
+            logging.info(
+                "%s: %d file(s), %d Hz, %d channel(s), %d samples, peak %.6g",
+                result.operation,
+                len(result.input_files),
+                result.sample_rate,
+                result.channels,
+                result.samples,
+                result.output_peak,
+            )
+            print(result.output_path)
+            return 0
+
+        config = SeparationConfig(
+            model=args.model,
+            device=args.device,
+            shifts=args.shifts,
+            split=not args.no_split,
+            overlap=args.overlap,
+            segment=args.segment,
+            residual_passes=args.residual_passes,
+            wav_subtype=args.wav_subtype,
+            progress=not args.no_progress,
+        )
         config.validate()
         backend = DemucsBackend(config)
         for input_path in args.inputs:
@@ -132,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(result.output_path)
         return 0
-    except (SeparationError, ValueError, OSError) as error:
+    except (AudioOperationError, SeparationError, ValueError, OSError) as error:
         logging.error("%s", error)
         return 2
     except KeyboardInterrupt:
