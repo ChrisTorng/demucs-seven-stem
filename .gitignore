@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Editors
+.vscode/
+.idea/
+
+# Generated audio
+separated-seven-stem/
+*.wav
+*.flac
+*.mp3
