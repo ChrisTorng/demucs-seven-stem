@@ -10,6 +10,15 @@ residual = pass input - (drums + bass + other + vocals + guitar + piano)
 同一個 pass 的七個浮點 WAV 相加，可重建該 pass 的輸入。也可以把第七軌再送進
 Demucs，產生下一層的六軌加新 residual。
 
+工具也提供不需執行 Demucs 的 sample-aligned 音訊運算：
+
+```text
+sum output        = input 1 + input 2 + ...
+difference output = reference - (input 1 + input 2 + ...)
+```
+
+輸入可為多個音訊檔、資料夾，或兩者混合。
+
 ## 輸出內容
 
 預設執行：
@@ -60,6 +69,91 @@ pass_01/
 `pass_01` 的輸入就是 `pass_00/residual.wav` 的實際儲存 samples。
 `--residual-passes 2` 會繼續處理 `pass_01/residual.wav`，依此類推。每增加一次 pass，
 都會增加一次完整的 Demucs 推論成本。
+
+## 音訊加總與差值
+
+這兩種模式不載入 Demucs 模型，只使用 `soundfile` 解碼並以 float64 累加。
+輸出必須是 `.wav`，且沿用 `--wav-subtype DOUBLE|FLOAT`。
+程式不 normalize、不 clamp，因此輸出 sample 可以超過 `±1.0`。
+
+### 加總多個檔案
+
+```powershell
+demucs-seven-stem `
+  drums.wav bass.wav other.wav vocals.wav guitar.wav piano.wav `
+  --audio-output six-stem-sum.wav
+```
+
+### 加總資料夾中的全部音訊
+
+```powershell
+demucs-seven-stem `
+  "D:\Stems\pass_00" `
+  --audio-output "D:\Stems\seven-track-sum.wav"
+```
+
+資料夾模式預設只讀取第一層。加入 `--recursive` 可包含子資料夾：
+
+```powershell
+demucs-seven-stem `
+  "D:\AudioTree" `
+  --recursive `
+  --audio-output "D:\AudioTree\sum.wav"
+```
+
+可以混合多個檔案與資料夾：
+
+```powershell
+demucs-seven-stem `
+  "D:\StemsA" `
+  "D:\Extra\effect.wav" `
+  "D:\Extra\ambience.wav" `
+  --audio-output combined.wav
+```
+
+資料夾內會納入常見音訊副檔名，包括 WAV、FLAC、OGG、AIFF、CAF 與 MP3；
+實際能否解碼取決於目前安裝的 `libsndfile`。輸出檔本身與 `--reference` 指定的檔案
+會自動從資料夾掃描結果排除，以免被重複加入。
+
+### 以參考來源建立差值
+
+```powershell
+demucs-seven-stem `
+  drums.wav bass.wav other.wav vocals.wav guitar.wav piano.wav `
+  --reference original.wav `
+  --audio-output residual-from-files.wav
+```
+
+計算式：
+
+```text
+residual-from-files.wav = original.wav - sum(六個輸入檔)
+```
+
+也可以直接指定放置 stems 的資料夾：
+
+```powershell
+demucs-seven-stem `
+  "D:\Stems\six-only" `
+  --reference "D:\Music\original.wav" `
+  --audio-output "D:\Stems\residual.wav"
+```
+
+加總與差值採嚴格 sample alignment。所有輸入以及參考檔必須具備完全相同的：
+
+- sample rate
+- channel 數
+- sample 數／長度
+- 起始時間對齊
+
+程式不會自動 resample、延遲補償、time stretch、截短或補零。任何不一致都會停止並指出檔案。
+這可避免在不知情的情況下產生錯位或相位錯誤的總和。
+
+如果輸出已存在，需加入 `--overwrite`：
+
+```powershell
+demucs-seven-stem stems --audio-output sum.wav --overwrite
+```
 
 ## Windows 安裝
 
@@ -175,7 +269,7 @@ demucs-seven-stem --help
 
 ## 開發
 
-CI 不下載 Demucs 模型，只測試 residual 計算、WAV 精度模型與基本程式碼品質。
+CI 不下載 Demucs 模型，只測試 residual 計算、音訊加總／差值、WAV 精度模型與基本程式碼品質。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
