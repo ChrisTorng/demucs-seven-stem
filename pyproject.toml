@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "demucs-seven-stem"
+version = "0.1.0"
+description = "Demucs six-source separation plus a reconstruction residual track"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "ChrisTorng" }]
+keywords = ["demucs", "audio", "music", "source-separation", "stem-separation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Sound/Audio :: Analysis",
+]
+dependencies = [
+  "demucs>=4.0.1,<5",
+  "numpy>=1.24,<3",
+  "soundfile>=0.12,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+demucs-seven-stem = "demucs_seven_stem.cli:main"
+
+[project.urls]
+Repository = "https://github.com/ChrisTorng/demucs-seven-stem"
+Issues = "https://github.com/ChrisTorng/demucs-seven-stem/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
