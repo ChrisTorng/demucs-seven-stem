@@ -1,275 +1,202 @@
 # demucs-seven-stem
 
-使用 Demucs `htdemucs_6s` 產生六個模型 stem，並額外建立第七軌
-`residual.wav`：
+使用 Demucs `htdemucs_6s` 對原始混音與後續 residual 反覆分軌，並把各次分軌得到的同名 stem 疊加成最終六軌。
+
+對第 `k` 次 pass：
 
 ```text
-residual = pass input - (drums + bass + other + vocals + guitar + piano)
+input_0 = original
+stems_k = Demucs(input_k)
+residual_k = input_k - sum(stems_k)
+input_(k+1) = residual_k
 ```
 
-同一個 pass 的七個浮點 WAV 相加，可重建該 pass 的輸入。也可以把第七軌再送進
-Demucs，產生下一層的六軌加新 residual。
-
-工具也提供不需執行 Demucs 的 sample-aligned 音訊運算：
+執行 `N` 次後：
 
 ```text
-sum output        = input 1 + input 2 + ...
-difference output = reference - (input 1 + input 2 + ...)
+accumulated_stem[name] = sum(pass_k_stem[name], k=0..N-1)
+final_residual = original - sum(all accumulated stems)
 ```
 
-輸入可為多個音訊檔、資料夾，或兩者混合。
+因此在相同 sample domain 與無額外量化的理想情況下：
 
-## 輸出內容
+```text
+final_residual == residual_(N-1)
+```
 
-預設執行：
+實際檔案可能有浮點加總順序或 WAV 精度造成的極小差異；`manifest.json` 會記錄 peak 與 RMS difference。
+
+## 預設行為
 
 ```powershell
-demucs-seven-stem "D:\Music\song.flac"
+demucs-seven-stem "D:\Music\song.wav"
 ```
+
+預設：
+
+- 總共執行 2 次分軌。
+- 第一次處理原音，第二次處理第一次 residual。
+- 寫出兩次結果疊加後的最終六軌。
+- 不保留各 pass 的中間六軌。
+- 不保留各 pass 的 residual。
+- 寫出 `final_residual.wav`。
+- 使用 64-bit float WAV (`DOUBLE`)。
 
 輸出：
 
 ```text
 separated-seven-stem/
 └─ song/
-   ├─ manifest.json
-   └─ pass_00/
-      ├─ drums.wav
-      ├─ bass.wav
-      ├─ other.wav
-      ├─ vocals.wav
-      ├─ guitar.wav
-      ├─ piano.wav
-      ├─ residual.wav
-      └─ manifest.json
+   ├─ drums.wav
+   ├─ bass.wav
+   ├─ other.wav
+   ├─ vocals.wav
+   ├─ guitar.wav
+   ├─ piano.wav
+   ├─ final_residual.wav
+   └─ manifest.json
 ```
 
-`pass_00` 的輸入是原始混音。`residual.wav` 是模型六軌總和與該輸入之間的差值。
+## 指定分軌次數
 
-執行一次 residual 再分軌：
+總共執行 3 次：
 
 ```powershell
-demucs-seven-stem "D:\Music\song.flac" --residual-passes 1
+demucs-seven-stem song.wav --passes 3
 ```
 
-會再建立：
+每增加一次 pass，就會對前一層 residual 再做一次完整六軌推論。
+
+舊版的 `--residual-passes N` 仍可使用，其總 pass 數為 `N + 1`，但新指令建議使用 `--passes`。
+
+## 輸出保留選項
+
+不要寫出最終累積六軌：
+
+```powershell
+demucs-seven-stem song.wav --no-accumulated-stems
+```
+
+保留每個 pass 的六軌：
+
+```powershell
+demucs-seven-stem song.wav --keep-pass-stems
+```
+
+保留每個 pass 的 residual：
+
+```powershell
+demucs-seven-stem song.wav --keep-pass-residuals
+```
+
+不要寫出 final residual：
+
+```powershell
+demucs-seven-stem song.wav --no-final-residual
+```
+
+完整保留兩次 pass 與最終輸出：
+
+```powershell
+demucs-seven-stem song.wav `
+  --passes 2 `
+  --keep-pass-stems `
+  --keep-pass-residuals
+```
+
+中間檔案會放在：
 
 ```text
-pass_01/
-├─ drums.wav
-├─ bass.wav
-├─ other.wav
-├─ vocals.wav
-├─ guitar.wav
-├─ piano.wav
-├─ residual.wav
-└─ manifest.json
+song/pass_00/
+song/pass_01/
 ```
 
-`pass_01` 的輸入就是 `pass_00/residual.wav` 的實際儲存 samples。
-`--residual-passes 2` 會繼續處理 `pass_01/residual.wav`，依此類推。每增加一次 pass，
-都會增加一次完整的 Demucs 推論成本。
+## Manifest
 
-## 音訊加總與差值
+最上層 `manifest.json` 記錄：
 
-這兩種模式不載入 Demucs 模型，只使用 `soundfile` 解碼並以 float64 累加。
-輸出必須是 `.wav`，且沿用 `--wav-subtype DOUBLE|FLOAT`。
-程式不 normalize、不 clamp，因此輸出 sample 可以超過 `±1.0`。
+- 實際總 pass 數與完整設定。
+- 每個 pass 的輸入、六軌與 residual peak／RMS。
+- 最終累積六軌的統計。
+- final residual 統計。
+- 最終六軌加 final residual 的重建誤差。
+- final residual 與最後一個 pass residual 的 peak／RMS difference。
 
-### 加總多個檔案
+## 精度
 
-```powershell
-demucs-seven-stem `
-  drums.wav bass.wav other.wav vocals.wav guitar.wav piano.wav `
-  --audio-output six-stem-sum.wav
-```
-
-### 加總資料夾中的全部音訊
-
-```powershell
-demucs-seven-stem `
-  "D:\Stems\pass_00" `
-  --audio-output "D:\Stems\seven-track-sum.wav"
-```
-
-資料夾模式預設只讀取第一層。加入 `--recursive` 可包含子資料夾：
-
-```powershell
-demucs-seven-stem `
-  "D:\AudioTree" `
-  --recursive `
-  --audio-output "D:\AudioTree\sum.wav"
-```
-
-可以混合多個檔案與資料夾：
-
-```powershell
-demucs-seven-stem `
-  "D:\StemsA" `
-  "D:\Extra\effect.wav" `
-  "D:\Extra\ambience.wav" `
-  --audio-output combined.wav
-```
-
-資料夾內會納入常見音訊副檔名，包括 WAV、FLAC、OGG、AIFF、CAF 與 MP3；
-實際能否解碼取決於目前安裝的 `libsndfile`。輸出檔本身與 `--reference` 指定的檔案
-會自動從資料夾掃描結果排除，以免被重複加入。
-
-### 以參考來源建立差值
-
-```powershell
-demucs-seven-stem `
-  drums.wav bass.wav other.wav vocals.wav guitar.wav piano.wav `
-  --reference original.wav `
-  --audio-output residual-from-files.wav
-```
-
-計算式：
+預設 `--wav-subtype DOUBLE` 使用 64-bit IEEE float WAV。這能最大限度保留：
 
 ```text
-residual-from-files.wav = original.wav - sum(六個輸入檔)
+original ≈ accumulated six stems + final residual
 ```
 
-也可以直接指定放置 stems 的資料夾：
+節省空間可使用：
 
 ```powershell
-demucs-seven-stem `
-  "D:\Stems\six-only" `
-  --reference "D:\Music\original.wav" `
-  --audio-output "D:\Stems\residual.wav"
+demucs-seven-stem song.wav --wav-subtype FLOAT
 ```
 
-加總與差值採嚴格 sample alignment。所有輸入以及參考檔必須具備完全相同的：
+`FLOAT` 是 32-bit float WAV，會引入 float32 量化，因此 final residual 與最後一個 pass residual 的差異通常較 `DOUBLE` 大，但仍應非常小。
 
-- sample rate
-- channel 數
-- sample 數／長度
-- 起始時間對齊
-
-程式不會自動 resample、延遲補償、time stretch、截短或補零。任何不一致都會停止並指出檔案。
-這可避免在不知情的情況下產生錯位或相位錯誤的總和。
-
-如果輸出已存在，需加入 `--overwrite`：
-
-```powershell
-demucs-seven-stem stems --audio-output sum.wav --overwrite
-```
+程式不會逐軌 normalize、clamp 或防 clipping；浮點 WAV 可保存超過 `±1.0` 的 sample。
 
 ## Windows 安裝
 
-建議使用 Python 3.11，並先安裝 FFmpeg，使 `ffmpeg.exe` 可由 `PATH` 找到。
+建議使用 Python 3.11，並先安裝 FFmpeg：
 
 ```powershell
 git clone https://github.com/ChrisTorng/demucs-seven-stem.git
 cd demucs-seven-stem
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-```
-
-### NVIDIA GPU
-
-先依 PyTorch 官方安裝頁選擇適合目前環境的 CUDA wheel：
-
-<https://pytorch.org/get-started/locally/>
-
-使用該頁產生的命令，透過虛擬環境 Python 安裝 `torch` 與 `torchaudio`，再安裝本專案：
-
-```powershell
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-執行時不需要啟用虛擬環境：
+NVIDIA GPU 請先依 PyTorch 官方安裝頁安裝適合目前 CUDA 的 `torch` 與 `torchaudio`，再安裝本專案。
+
+執行：
 
 ```powershell
-.\.venv\Scripts\demucs-seven-stem.exe "D:\Music\song.flac" --device cuda
+.\.venv\Scripts\demucs-seven-stem.exe "D:\Music\song.wav" --device cuda
 ```
 
-第一次使用 `htdemucs_6s` 時，Demucs 會下載模型權重。
-
-## 常用命令
-
-一次處理多個檔案：
+CPU：
 
 ```powershell
-demucs-seven-stem song1.flac song2.wav -o "D:\Stems"
+.\.venv\Scripts\demucs-seven-stem.exe "D:\Music\song.wav" --device cpu
 ```
 
-對第七軌再做一次七軌分解：
+使用本機模型目錄時，可指定模型 signature 與 repo：
 
 ```powershell
-demucs-seven-stem song.flac --residual-passes 1
+demucs-seven-stem song.wav `
+  --model 5c90dfd2 `
+  --model-repo "D:\Models\demucs"
 ```
 
-增加 shift averaging：
+CPU 與 GPU 使用相同模型權重。GPU 主要提升速度；因浮點運算核心與加總順序不同，結果不保證逐 sample 完全相同，但通常不構成可感知的分軌品質差異。
+
+## 多檔加總與參考差值
+
+原有的 sample-aligned 音訊工具仍保留。
+
+加總多個檔案或資料夾：
 
 ```powershell
-demucs-seven-stem song.flac --shifts 10
+demucs-seven-stem stems-folder extra.wav --audio-output sum.wav
 ```
 
-指定 GPU：
+參考來源減去輸入總和：
 
 ```powershell
-demucs-seven-stem song.flac --device cuda:0
+demucs-seven-stem stems-folder `
+  --reference original.wav `
+  --audio-output residual.wav
 ```
 
-覆寫既有輸出：
-
-```powershell
-demucs-seven-stem song.flac --overwrite
-```
-
-查看全部選項：
-
-```powershell
-demucs-seven-stem --help
-```
-
-## 精確重建與 WAV 格式
-
-預設 `--wav-subtype DOUBLE`，每個 sample 使用 64-bit IEEE 浮點數。程式會：
-
-1. 將六個模型 stem 轉換成最終 WAV 精度。
-2. 使用轉換後的六軌計算 residual。
-3. 寫出七個檔案。
-4. 重新讀回七軌並加總。
-5. 將實際 peak reconstruction error 寫入 `manifest.json`。
-
-這避免 Demucs CLI 預設的逐軌 rescale、clamp 或整數 PCM 量化破壞加總關係。程式不會對
-任何 stem normalize 或防 clipping；浮點 WAV 可以保留超過 `±1.0` 的 sample。
-
-使用 `--wav-subtype FLOAT` 可改成 32-bit float WAV，容量約為 DOUBLE 的一半，但檔案讀回後
-通常會有極小的 float32 量化重建誤差。
-
-> 「七軌可以重建混音」只代表 mixture consistency。它不代表樂器一定被分配到正確 stem。
-> 例如吉他若完整漏到 `other`，總和仍可能正確，而 residual 不會指出這個分類錯誤。
-
-## Residual 的解讀
-
-`residual.wav` 可能包含：
-
-- 六軌全部漏掉的成分。
-- 六軌重複估計所需的反相抵銷成分。
-- 相位、時間對齊與瞬態誤差。
-- 分段、shift averaging 與模型近似造成的誤差。
-
-因此它適合作為 reconstruction error 與補償軌，不應直接視為第七種純樂器 stem。
-遞迴分解 residual 可以協助觀察殘差中的可分離結構，但後續 pass 仍可能產生 bleed 與人工雜訊。
-
-## Manifest
-
-每個 pass 的 `manifest.json` 記錄：
-
-- sample rate、channel 與 sample 數。
-- 各 stem 與 residual 的 peak／RMS。
-- residual 相對 pass input 的 RMS dB。
-- 記憶體內重建 peak error。
-- 七個 WAV 實際讀回相加後的 peak error。
-
-最上層 `manifest.json` 另記錄完整執行參數與所有 passes。
+所有檔案必須具有完全相同的 sample rate、channel 數與 sample 數。
 
 ## 開發
-
-CI 不下載 Demucs 模型，只測試 residual 計算、音訊加總／差值、WAV 精度模型與基本程式碼品質。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
