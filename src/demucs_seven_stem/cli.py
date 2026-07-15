@@ -18,12 +18,19 @@ def _non_negative_int(value: str) -> int:
     return parsed
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be one or greater")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="demucs-seven-stem",
         description=(
-            "Run Demucs htdemucs_6s with a seventh residual track, or combine "
-            "sample-aligned audio files into a sum/difference WAV."
+            "Run recursive Demucs six-stem separation, accumulate same-name stems, "
+            "and create a final residual; or combine sample-aligned audio files."
         ),
     )
     parser.add_argument(
@@ -62,7 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="In audio-operation mode, search supplied directories recursively.",
     )
-    parser.add_argument("--model", default="htdemucs_6s", help="Demucs model name.")
+    parser.add_argument("--model", default="htdemucs_6s", help="Demucs model name or signature.")
+    parser.add_argument(
+        "--model-repo",
+        type=Path,
+        help="Optional local Demucs model repository directory.",
+    )
     parser.add_argument(
         "--device",
         default="auto",
@@ -92,14 +104,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable chunked processing; this can require much more VRAM.",
     )
     parser.add_argument(
-        "--residual-passes",
-        type=_non_negative_int,
-        default=0,
+        "--passes",
+        type=_positive_int,
+        default=None,
         metavar="N",
         help=(
-            "Run N additional seven-track separations on the preceding residual. "
-            "Use 1 to separate the first residual once."
+            "Total recursive separation passes. Pass 1 uses the original; later passes use "
+            "the preceding residual (default: 2)."
         ),
+    )
+    parser.add_argument(
+        "--residual-passes",
+        type=_non_negative_int,
+        default=None,
+        metavar="N",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-accumulated-stems",
+        action="store_true",
+        help="Do not write the final six same-name stems accumulated across all passes.",
+    )
+    parser.add_argument(
+        "--keep-pass-stems",
+        action="store_true",
+        help="Keep each pass' six intermediate stems (default: discard them).",
+    )
+    parser.add_argument(
+        "--keep-pass-residuals",
+        "--keep-residuals",
+        dest="keep_pass_residuals",
+        action="store_true",
+        help="Keep each pass' residual.wav (default: discard them).",
+    )
+    parser.add_argument(
+        "--no-final-residual",
+        action="store_true",
+        help="Do not write original minus the six accumulated stems (default: write it).",
     )
     parser.add_argument(
         "--wav-subtype",
@@ -127,6 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable detailed logging.",
     )
     return parser
+
+
+def _resolve_passes(args: argparse.Namespace) -> tuple[int, int | None]:
+    if args.passes is not None and args.residual_passes is not None:
+        raise ValueError("Use either --passes or legacy --residual-passes, not both.")
+    if args.residual_passes is not None:
+        return 2, args.residual_passes
+    return args.passes if args.passes is not None else 2, None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -161,14 +210,21 @@ def main(argv: list[str] | None = None) -> int:
             print(result.output_path)
             return 0
 
+        passes, residual_passes = _resolve_passes(args)
         config = SeparationConfig(
             model=args.model,
+            model_repo=args.model_repo,
             device=args.device,
             shifts=args.shifts,
             split=not args.no_split,
             overlap=args.overlap,
             segment=args.segment,
-            residual_passes=args.residual_passes,
+            passes=passes,
+            residual_passes=residual_passes,
+            write_accumulated_stems=not args.no_accumulated_stems,
+            keep_pass_stems=args.keep_pass_stems,
+            keep_pass_residuals=args.keep_pass_residuals,
+            write_final_residual=not args.no_final_residual,
             wav_subtype=args.wav_subtype,
             progress=not args.no_progress,
         )
