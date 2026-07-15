@@ -1,3 +1,3 @@
-"""Six Demucs stems plus reconstruction and audio-combination utilities."""
+"""Recursive Demucs stem accumulation and residual tools."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
